@@ -65,3 +65,7 @@ is the only bound.
 ```bash
 pytest
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE).
