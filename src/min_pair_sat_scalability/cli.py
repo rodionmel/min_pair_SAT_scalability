@@ -1,7 +1,7 @@
 """Command-line entry point.
 
-Debug output: ``-v`` logs progress (encoding sizes, every SAT call, new best
-costs), ``-vv`` adds debug detail. Logs go to stderr, so JSON on stdout stays
+Debug output: ``-v`` logs progress (every K tried: answer, time, CNF size),
+``-vv`` adds debug detail. Logs go to stderr, so JSON on stdout stays
 clean. The environment variable ``MIN_PAIR_SAT_LOG`` (e.g. ``DEBUG``) sets
 the level when no ``-v`` is given.
 """
@@ -36,13 +36,13 @@ def setup_logging(verbosity: int) -> None:
 def _cmd_solve(a) -> int:
     """``solve``: run one graph through ``jobs.solve_one`` and print/write the JSON result."""
     job = {"id": None, "problem": a.problem, "graph": a.graph, "strategy": a.strategy,
-           "solver": a.solver, "timeout": a.timeout, "params": json.loads(a.params)}
+           "solver": a.solver, "timeout": a.timeout, "k_max": a.k_max, "params": json.loads(a.params)}
     out = jobs.solve_one(job)
     text = json.dumps(out, indent=2)
     if a.output:
         with open(a.output, "w") as f:
             f.write(text)
-        print(f"{out['status']} cost={out['cost']} -> {a.output}")
+        print(f"{out['status']} K={out['cost']} -> {a.output}")
     else:
         print(text)
     return 0 if out["status"] != "error" else 1
@@ -82,7 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--problem", default="pair_cover", choices=sorted(PROBLEMS))
     s.add_argument("--strategy", default="linear", choices=STRATEGIES)
     s.add_argument("--solver", default=DEFAULT_SOLVER, help="any PySAT solver name")
-    s.add_argument("--timeout", type=float, default=None, help="seconds (linear/binary only)")
+    s.add_argument("--timeout", type=float, default=None, help="seconds, whole search")
+    s.add_argument("--k-max", type=int, default=None, help="give up (status unsat) above this K")
     s.add_argument("--params", default="{}", help="JSON dict of encoder parameters")
     s.add_argument("-o", "--output", help="write JSON here instead of stdout")
     s.set_defaults(func=_cmd_solve)

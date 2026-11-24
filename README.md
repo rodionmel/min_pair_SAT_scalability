@@ -2,7 +2,7 @@
 
 A Python tool and testground for studying the scalability of SAT-based min-pair problems.
 
-Pipeline: **graph file → encoding (CNF + objective) → minimizing SAT/MaxSAT search → JSON result**,
+Pipeline: **graph file → CNF for a given K → search for the least satisfiable K → JSON result**,
 plus a small job layer for sweeps run locally or as SLURM arrays.
 
 ## Setup
@@ -20,17 +20,19 @@ pip install -e ".[dev]"
 | module | role |
 |---|---|
 | `graph.py` | `Graph` model; read DIMACS (`p edge n m` / `e u v`, 1-based) or plain edge lists |
-| `problems.py` | encoders `graph -> Encoding(clauses, objective, decode)`; register new ones in `PROBLEMS` |
-| `solve.py` | minimization: `linear` (SAT-UNSAT descent), `binary`, `maxsat` (RC2) |
+| `problems.py` | encoders `(graph, K) -> Encoding(clauses, decode)`; register new ones in `PROBLEMS` |
+| `solve.py` | search over K: `linear` (K = 0, 1, 2, ...) or `binary` (doubling, then bisection) |
 | `jobs.py` | sweep planning, local / SLURM execution, result collection |
 
 ### The problem: `pair_cover`
 
 Assign every vertex a 0/1 value in each of K stages so that every edge (i, j) shows all four
-patterns 00, 01, 10, 11 in some stage; minimize K. This is a binary covering array on the graph.
-The encoding fixes stage 0 to all zeros (column flips are a symmetry) and brackets K between
-`can2(greedy clique size)` and `can2(greedy colour count)`, where `can2(k)` is the optimal
-covering-array size for k columns. `vertex_cover` remains as a simple test problem.
+patterns 00, 01, 10, 11 in some stage; minimize K.
+
+The encoding is the straightforward one: variables `x[v][s]` for each vertex and stage, and for
+each (edge, pattern, stage) a Tseitin witness `y -> (x[i][s] = a and x[j][s] = b)`, with one
+clause `OR_s y` per (edge, pattern). Each K is a separate SAT instance; no symmetry breaking or
+bounds are used. Each result lists every K tried with its answer, solve time and CNF size.
 
 ## Usage
 
@@ -56,9 +58,9 @@ SAT timings). Finished jobs are skipped, so `run`/`submit` can simply be repeate
 ### Solvers and timeouts
 
 Any PySAT solver name works (`glucose4` default, `cadical195`, `minisat22`, `maplechrono`, ...).
-In-process timeouts use `interrupt()`, which PySAT's CaDiCaL and Lingeling bindings don't support:
-combining them with `--timeout` is an error. For those and for `maxsat`, the SLURM time limit
-is the only bound.
+`--timeout` bounds the whole search and works by interrupting the solver, which PySAT's CaDiCaL
+and Lingeling bindings don't support: combining them with `--timeout` is an error, and the SLURM
+time limit is then the only bound. `--k-max` caps the search (status `unsat` above it).
 
 ## Tests
 

@@ -20,6 +20,7 @@ Sweep spec (JSON) -- the list fields are expanded as a cartesian product::
       "strategies": ["linear", "binary"],
       "solvers": ["glucose4"],
       "timeout": 600,
+      "k_max": null,                      # optional cap on the K search
       "params": {}                        # passed to the encoder
     }
 """
@@ -65,7 +66,7 @@ def plan(spec_path: str | Path, out_dir: str | Path) -> list[dict]:
         graphs += matches
     jobs = [
         {"id": i, "problem": spec["problem"], "graph": g, "strategy": st, "solver": so,
-         "timeout": spec.get("timeout"), "params": spec.get("params", {})}
+         "timeout": spec.get("timeout"), "k_max": spec.get("k_max"), "params": spec.get("params", {})}
         for i, (g, st, so) in enumerate(itertools.product(
             graphs, spec.get("strategies", ["linear"]), spec.get("solvers", [DEFAULT_SOLVER])))
     ]
@@ -97,21 +98,20 @@ def pending(run_dir: str | Path) -> list[int]:
 def solve_one(job: dict) -> dict:
     """Run a single job description and return its result dict; never raises.
 
-    The result is ``Result.to_dict()`` plus graph size, encoding time and
-    encoder metadata, the job itself, host and SLURM job id. Failures become
-    ``status="error"`` with the traceback attached.
+    The result is ``Result.to_dict()`` plus graph size, the job itself, host
+    and SLURM job id. Failures become ``status="error"`` with the traceback
+    attached.
     """
     log.info("job %s: %s %s strategy=%s solver=%s", job.get("id"), job["problem"], job["graph"],
              job["strategy"], job["solver"])
     t0 = time.perf_counter()
     try:
         g = read_graph(job["graph"])
-        t_enc = time.perf_counter()
-        enc = encode(job["problem"], g, **job.get("params", {}))
-        enc_time = time.perf_counter() - t_enc
-        res = minimize(enc, strategy=job["strategy"], solver=job["solver"], timeout=job.get("timeout"))
+        params = job.get("params", {})
+        res = minimize(lambda k: encode(job["problem"], g, k, **params), strategy=job["strategy"],
+                       solver=job["solver"], timeout=job.get("timeout"), k_max=job.get("k_max"))
         out = res.to_dict()
-        out.update(graph_n=g.n, graph_m=g.m, encode_time=enc_time, encoding_info=enc.info)
+        out.update(graph_n=g.n, graph_m=g.m)
     except Exception as e:  # recorded, so one bad job does not kill a sweep
         log.exception("job %s failed", job.get("id"))
         out = Result(status="error", error=f"{type(e).__name__}: {e}").to_dict()
@@ -146,7 +146,7 @@ def run_local(run_dir: str | Path, force: bool = False) -> int:
     ids = [j["id"] for j in load_jobs(run_dir)] if force else pending(run_dir)
     for i in ids:
         out = run_job(run_dir, i, force=force)
-        print(f"job {i}: {out['status']} cost={out['cost']} {out['total_time']:.2f}s", flush=True)
+        print(f"job {i}: {out['status']} K={out['cost']} {out['total_time']:.2f}s", flush=True)
     return len(ids)
 
 
@@ -206,8 +206,8 @@ def submit(run_dir: str | Path, mem: str = "4G", time_limit: Optional[str] = Non
 
 
 CSV_FIELDS = ["id", "graph", "problem", "strategy", "solver", "timeout", "graph_n", "graph_m",
-              "status", "cost", "lower_bound", "lb", "ub", "chi_greedy", "omega_greedy",
-              "nvars", "nclauses", "n_calls", "encode_time", "wall_time", "total_time", "host", "error"]
+              "k_max", "status", "cost", "lower_bound", "nvars", "nclauses", "n_calls",
+              "solve_time", "encode_time", "wall_time", "total_time", "host", "error"]
 
 
 def collect(run_dir: str | Path) -> Path:
@@ -221,9 +221,11 @@ def collect(run_dir: str | Path) -> Path:
             continue
         r = json.loads(path.read_text())
         counts[r["status"]] = counts.get(r["status"], 0) + 1
-        # Flatten: job fields, then result fields, then encoder metadata.
-        row = {**job, **{k: r.get(k) for k in CSV_FIELDS if k in r}, **(r.get("encoding_info") or {}),
-               "n_calls": len(r.get("calls", []))}
+        # Flatten: job fields, result fields, and per-call times summed over all K tried.
+        calls = r.get("calls", [])
+        row = {**job, **{k: r.get(k) for k in CSV_FIELDS if k in r}, "n_calls": len(calls),
+               "solve_time": sum(c["time"] for c in calls),
+               "encode_time": sum(c.get("encode_time", 0) for c in calls)}
         rows.append({k: row.get(k) for k in CSV_FIELDS})
     out = run_dir / "results.csv"
     with out.open("w", newline="") as f:
