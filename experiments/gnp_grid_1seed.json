@@ -1,0 +1,25 @@
+{
+  "problem": "pair_cover",
+  "generator": {
+    "model": "gnp",
+    "n": {
+      "start": 8,
+      "stop": 128
+    },
+    "p": [
+      0.1,
+      0.25,
+      0.5,
+      0.75,
+      0.9
+    ],
+    "seeds": 1
+  },
+  "strategies": [
+    "linear"
+  ],
+  "solvers": [
+    "glucose4"
+  ],
+  "timeout": 1800
+}

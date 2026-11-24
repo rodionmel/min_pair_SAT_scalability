@@ -58,13 +58,14 @@ class Result:
 
 
 def minimize(build: Callable[[int], Encoding], strategy: str = "linear", solver: str = DEFAULT_SOLVER,
-             timeout: Optional[float] = None, k_max: Optional[int] = None) -> Result:
+             timeout: Optional[float] = None, k_max: Optional[int] = None, k_min: int = 0) -> Result:
     """Find the least K for which ``build(K)`` is satisfiable.
 
     ``build`` must be monotone (SAT at K implies SAT at K+1). ``solver`` is
     any PySAT solver name; ``timeout`` (seconds) bounds the whole run;
     ``k_max`` caps the search (without it, a family that is never satisfiable
-    would loop forever).
+    would loop forever). ``k_min`` starts the search there; the caller vouches
+    that every smaller K is infeasible (it becomes the initial lower bound).
     """
     if strategy not in STRATEGIES:
         raise ValueError(f"unknown strategy {strategy!r}; known: {STRATEGIES}")
@@ -72,9 +73,10 @@ def minimize(build: Callable[[int], Encoding], strategy: str = "linear", solver:
         raise ValueError(f"solver {solver!r} cannot be interrupted, so it cannot enforce a timeout; "
                          "use e.g. glucose4/minisat22/maplechrono, or drop the timeout and rely on "
                          "the job's wall-clock limit")
-    log.info("minimize: strategy=%s solver=%s timeout=%s k_max=%s", strategy, solver, timeout, k_max)
+    log.info("minimize: strategy=%s solver=%s timeout=%s k_min=%d k_max=%s",
+             strategy, solver, timeout, k_min, k_max)
     t0 = time.perf_counter()
-    res = Result(status="timeout")
+    res = Result(status="timeout", lower_bound=k_min)
     search = _Search(build, solver, None if timeout is None else t0 + timeout, res)
     (_linear if strategy == "linear" else _binary)(search, k_max)
     res.wall_time = time.perf_counter() - t0
@@ -134,8 +136,8 @@ class _Search:
 
 
 def _linear(search: _Search, k_max: Optional[int]) -> None:
-    """K = 0, 1, 2, ... until the first SAT (optimal) or UNSAT at ``k_max``."""
-    k = 0
+    """K = k_min, k_min+1, ... until the first SAT (optimal) or UNSAT at ``k_max``."""
+    k = search.res.lower_bound
     while k_max is None or k <= k_max:
         out = search.try_k(k)
         if out is None:
@@ -148,10 +150,10 @@ def _linear(search: _Search, k_max: Optional[int]) -> None:
 
 
 def _binary(search: _Search, k_max: Optional[int]) -> None:
-    """Doubling (0, 1, 2, 4, ...) until SAT, then bisection between the last
-    UNSAT and the first SAT K."""
+    """Doubling (k_min, 2*k_min, ...; from 0: 0, 1, 2, 4, ...) until SAT, then
+    bisection between the last UNSAT and the first SAT K."""
     res = search.res
-    k = 0
+    k = res.lower_bound
     while True:  # 1. find some feasible K
         if k_max is not None and k > k_max:
             if k_max >= res.lower_bound:  # the cap itself was skipped by doubling

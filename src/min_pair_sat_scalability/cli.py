@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 
-from . import __version__, generators, jobs
+from . import __version__, generators, jobs, universal
 from .graph import write_graph
 from .problems import PROBLEMS
 from .solve import DEFAULT_SOLVER, STRATEGIES
@@ -70,6 +70,21 @@ def _cmd_gen(a) -> int:
     return 0
 
 
+def _cmd_universal(a) -> int:
+    """``universal``: precompute optimal universal sets into the table, or show it."""
+    if a.show:
+        for c, entry in sorted(universal.load_table(a.table).items()):
+            print(f"c={c:3d}  K={entry['k']}")
+        return 0
+    if a.c is not None:
+        start, stop = a.c, a.c
+    else:
+        start, stop = a.start, a.stop  # stop None: run until killed
+    universal.precompute(start, stop, path=a.table, solver=a.solver, timeout=a.timeout,
+                         symmetry=a.symmetry)
+    return 0
+
+
 def _cmd_jobs(a) -> int:
     """``jobs <plan|run|submit|status|collect>``: dispatch to ``jobs.py``."""
     if a.jobs_cmd == "plan":
@@ -87,6 +102,8 @@ def _cmd_jobs(a) -> int:
         print(f"{len(all_jobs) - len(todo)}/{len(all_jobs)} done, {len(todo)} pending")
     elif a.jobs_cmd == "collect":
         jobs.collect(a.dir)
+    elif a.jobs_cmd == "fill-stages":
+        jobs.fill_stages(a.dir)
     return 0
 
 
@@ -129,6 +146,21 @@ def build_parser() -> argparse.ArgumentParser:
                     help="graph power: 1 = planar graph, 2 = add edges for paths of length 2, ...")
     g.set_defaults(func=_cmd_gen)
 
+    u = sub.add_parser("universal", help="precompute optimal universal sets (pair cover of K_c)",
+                       description="Entries are saved after each c, so a run without --c/--stop "
+                                   "can simply be killed. Existing entries are skipped.")
+    u.add_argument("--c", type=int, help="compute only this set size")
+    u.add_argument("--start", type=int, default=1, help="first set size (default 1)")
+    u.add_argument("--stop", type=int, help="last set size (default: run until killed or timeout)")
+    u.add_argument("--timeout", type=float, help="seconds per set size; stops at the first timeout")
+    u.add_argument("--solver", default=DEFAULT_SOLVER)
+    u.add_argument("--symmetry", default="none", choices=sorted(universal.SYMMETRY),
+                   help="symmetry breaking: zero = stage 0 all zeros, zero_lex = + ordered stages, "
+                        "full = + ordered columns (default: none, the basic encoding)")
+    u.add_argument("--table", default=str(universal.DEFAULT_TABLE), help="table file (default: packaged)")
+    u.add_argument("--show", action="store_true", help="print the table and exit")
+    u.set_defaults(func=_cmd_universal)
+
     j = sub.add_parser("jobs", help="plan / run / submit / collect a sweep")
     jsub = j.add_subparsers(dest="jobs_cmd", required=True)
     jp = jsub.add_parser("plan", help="expand a sweep spec into DIR/jobs.jsonl")
@@ -146,7 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
     js.add_argument("--sbatch-arg", action="append", default=[],
                     help="extra #SBATCH line, e.g. --sbatch-arg=--partition=long")
     js.add_argument("--dry-run", action="store_true", help="write the script, do not submit")
-    for name, help_ in (("status", "count done / pending"), ("collect", "write DIR/results.csv")):
+    for name, help_ in (("status", "count done / pending"), ("collect", "write DIR/results.csv"),
+                        ("fill-stages", "coloring runs: add stages from the current universal-set table")):
         jsub.add_parser(name, help=help_).add_argument("dir")
     j.set_defaults(func=_cmd_jobs)
     return p

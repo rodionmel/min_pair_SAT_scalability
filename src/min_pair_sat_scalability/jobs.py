@@ -55,7 +55,7 @@ from typing import Optional
 
 from .generators import generate, geometric_sizes
 from .graph import read_graph, write_graph
-from .problems import encode
+from .problems import encode, k_min
 from .solve import DEFAULT_SOLVER, Result, minimize
 
 log = logging.getLogger(__name__)
@@ -152,7 +152,8 @@ def solve_one(job: dict) -> dict:
         g = read_graph(job["graph"])
         params = job.get("params", {})
         res = minimize(lambda k: encode(job["problem"], g, k, **params), strategy=job["strategy"],
-                       solver=job["solver"], timeout=job.get("timeout"), k_max=job.get("k_max"))
+                       solver=job["solver"], timeout=job.get("timeout"), k_max=job.get("k_max"),
+                       k_min=k_min(job["problem"], g))
         out = res.to_dict()
         out.update(graph_n=g.n, graph_m=g.m)
     except Exception as e:  # recorded, so one bad job does not kill a sweep
@@ -262,9 +263,36 @@ def submit(run_dir: str | Path, mem: str = "4G", time_limit: Optional[str] = Non
     return script
 
 
+def fill_stages(run_dir: str | Path) -> int:
+    """Re-decode colouring results whose ``stages`` is missing (chi was beyond
+    the universal-set table when the job ran) using the current table, in
+    place. Returns how many results were filled."""
+    from .universal import stages_from_coloring
+    filled = 0
+    for job in load_jobs(run_dir):
+        path = result_path(run_dir, job["id"])
+        if not path.exists():
+            continue
+        r = json.loads(path.read_text())
+        sol = r.get("solution") or {}
+        if "colors" not in sol or sol.get("stages") is not None:
+            continue
+        built = stages_from_coloring(sol["colors"], sol["chi"])
+        if built is None:
+            log.warning("job %d: chi=%d still beyond the table", job["id"], sol["chi"])
+            continue
+        sol.update(built)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(r, indent=2))
+        tmp.replace(path)
+        filled += 1
+    print(f"filled stages for {filled} results")
+    return filled
+
+
 CSV_FIELDS = ["id", "graph", "model", "n", "p", "e", "seed",
               "problem", "strategy", "solver", "timeout", "graph_n", "graph_m",
-              "k_max", "status", "cost", "lower_bound", "nvars", "nclauses", "n_calls",
+              "k_max", "status", "cost", "lower_bound", "stages", "nvars", "nclauses", "n_calls",
               "solve_time", "encode_time", "wall_time", "total_time", "host", "error"]
 
 
@@ -282,7 +310,7 @@ def collect(run_dir: str | Path) -> Path:
         # Flatten: job fields, result fields, and per-call times summed over all K tried.
         calls = r.get("calls", [])
         row = {**job, **job.get("gen", {}), **{k: r.get(k) for k in CSV_FIELDS if k in r},
-               "n_calls": len(calls),
+               "n_calls": len(calls), "stages": (r.get("solution") or {}).get("stages"),
                "solve_time": sum(c["time"] for c in calls),
                "encode_time": sum(c.get("encode_time", 0) for c in calls)}
         rows.append({k: row.get(k) for k in CSV_FIELDS})

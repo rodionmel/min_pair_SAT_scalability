@@ -1,0 +1,32 @@
+{
+  "problem": "pair_cover",
+  "generator": {
+    "model": "triangular",
+    "n": {
+      "start": 4,
+      "stop": 32
+    },
+    "p": [
+      0,
+      0.1,
+      0.25,
+      0.5,
+      0.75
+    ],
+    "e": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "seeds": 1
+  },
+  "strategies": [
+    "linear"
+  ],
+  "solvers": [
+    "glucose4"
+  ],
+  "timeout": 1800
+}

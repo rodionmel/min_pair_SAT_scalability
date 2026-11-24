@@ -113,3 +113,56 @@ def test_non_interruptible_solver_with_timeout_rejected():
 
 def test_cadical_without_timeout_works():
     assert solve(complete(4), solver="cadical195").cost == 5
+
+
+# --- optional symmetry breaking -------------------------------------------------
+
+def test_lex_leq_matches_brute_force():
+    from pysat.formula import IDPool
+    from pysat.solvers import Solver
+    from min_pair_sat_scalability.problems import lex_leq
+    L = 3
+    for strict in (False, True):
+        for a_bits in itertools.product((0, 1), repeat=L):
+            for b_bits in itertools.product((0, 1), repeat=L):
+                pool = IDPool()
+                a = [pool.id(("a", i)) for i in range(L)]
+                b = [pool.id(("b", i)) for i in range(L)]
+                units = [[v if bit else -v] for v, bit in zip(a + b, a_bits + b_bits)]
+                with Solver("glucose4", bootstrap_with=lex_leq(pool, a, b, strict) + units) as s:
+                    expected = a_bits < b_bits if strict else a_bits <= b_bits
+                    assert s.solve() == expected, (a_bits, b_bits, strict)
+
+
+@pytest.mark.parametrize("symmetry", ["zero", "zero_lex"])
+@pytest.mark.parametrize("graph,expected", KNOWN, ids=[g.name for g, _ in KNOWN])
+def test_symmetry_modes_keep_optimum(graph, expected, symmetry):
+    res = minimize(lambda k: encode("pair_cover", graph, k, symmetry=symmetry))
+    assert (res.status, res.cost) == ("optimal", expected)
+    rows = res.solution["rows"]
+    assert check_pair_cover(graph, rows) == []
+    assert set(rows[0]) <= {"0"}  # stage 0 all zeros
+    if symmetry == "zero_lex":
+        assert rows[1:] == sorted(rows[1:])
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_symmetry_modes_agree_on_random_graphs(seed):
+    g = random_graph(12, 0.5, seed)
+    costs = {s: minimize(lambda k: encode("pair_cover", g, k, symmetry=s)).cost
+             for s in ("none", "zero", "zero_lex")}
+    assert len(set(costs.values())) == 1, costs
+
+
+def test_col_lex_on_complete_graphs():
+    for n, expected in [(3, 4), (4, 5), (6, 6), (10, 6)]:
+        g = complete(n)
+        res = minimize(lambda k: encode("pair_cover", g, k, symmetry="zero_lex", col_lex=True))
+        assert res.cost == expected
+        cols = ["".join(r[v] for r in res.solution["rows"][1:]) for v in range(n)]
+        assert cols == sorted(cols) and len(set(cols)) == n
+
+
+def test_unknown_symmetry_rejected():
+    with pytest.raises(ValueError):
+        encode("pair_cover", complete(2), 4, symmetry="bogus")

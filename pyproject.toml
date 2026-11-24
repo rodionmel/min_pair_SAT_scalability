@@ -24,5 +24,8 @@ min-pair-sat = "min_pair_sat_scalability.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+min_pair_sat_scalability = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

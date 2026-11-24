@@ -23,6 +23,7 @@ pip install -e ".[dev]"
 | `problems.py` | encoders `(graph, K) -> Encoding(clauses, decode)`; register new ones in `PROBLEMS` |
 | `solve.py` | search over K: `linear` (K = 0, 1, 2, ...) or `binary` (doubling, then bisection) |
 | `jobs.py` | sweep planning, local / SLURM execution, result collection |
+| `universal.py` | precomputed optimal universal sets (table in `src/.../data/universal_sets.json`) |
 | `generators.py` | random graphs: uniform G(n, p) and thinned power of a triangular lattice |
 
 ### The problem: `pair_cover`
@@ -34,6 +35,35 @@ The encoding is the straightforward one: variables `x[v][s]` for each vertex and
 each (edge, pattern, stage) a Tseitin witness `y -> (x[i][s] = a and x[j][s] = b)`, with one
 clause `OR_s y` per (edge, pattern). Each K is a separate SAT instance; no symmetry breaking or
 bounds are used. Each result lists every K tried with its answer, solve time and CNF size.
+
+### Option: symmetry breaking (`"params": {"symmetry": ...}`)
+
+Off by default. `"zero"` fixes stage 0 to all zeros (flipping a vertex's values keeps its edges
+covered); `"zero_lex"` also orders stages 1..K-1 lexicographically (stages are interchangeable).
+For complete graphs only, `col_lex` also orders the columns strictly (`universal --symmetry full`).
+
+### Option: colouring route (`--problem coloring`)
+
+An alternative to the direct encoding that gives an upper bound on the number of stages:
+1. Find a clique with the simplest greedy algorithm (scan by decreasing degree, keep a vertex if it
+   is adjacent to all kept ones).
+2. Fix the clique vertices to colours 0, 1, ... (symmetry breaking) and SAT-search the least
+   number of colours chi, starting at the clique size.
+3. Give colour j the j-th column of the precomputed optimal universal set of size chi.
+
+The result reports `chi` (the minimized value, `cost`) and the resulting `stages`/`rows`. This is
+not always optimal for pair cover: a 10-vertex graph has chi = 5 (so 6 stages) but a 5-stage pair
+cover. The universal sets are pair covers of complete graphs, computed with the basic encoding:
+
+```bash
+min-pair-sat universal --start 1 --stop 75 --symmetry full    # or omit --stop: run until killed
+min-pair-sat universal --show
+min-pair-sat solve graph.dimacs --problem coloring
+```
+
+If chi exceeds the table, the colouring is still reported but `stages` is null; after extending
+the table, `min-pair-sat jobs fill-stages <run dir>` fills them in from the saved colourings.
+The packaged table covers c = 1 … 75 (c ≤ 10 basic encoding, c ≥ 11 with `--symmetry full`).
 
 ## Usage
 
