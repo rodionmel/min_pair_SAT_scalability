@@ -23,6 +23,7 @@ pip install -e ".[dev]"
 | `problems.py` | encoders `(graph, K) -> Encoding(clauses, decode)`; register new ones in `PROBLEMS` |
 | `solve.py` | search over K: `linear` (K = 0, 1, 2, ...) or `binary` (doubling, then bisection) |
 | `jobs.py` | sweep planning, local / SLURM execution, result collection |
+| `generators.py` | random graphs: uniform G(n, p) and thinned triangular lattice (+ graph power) |
 
 ### The problem: `pair_cover`
 
@@ -41,6 +42,19 @@ Single run (`-v` logs progress, `-vv` debug detail, both on stderr):
 ```bash
 min-pair-sat -v solve examples/graphs/gnp_30.dimacs --strategy linear --timeout 60
 ```
+
+Generate graphs (every combination of the listed values, `--count` seeds each; DIMACS files
+named after their parameters, e.g. `tri_n8_p0.1_e2_s0.dimacs`):
+
+```bash
+# uniform random: n vertices, each edge included with probability p
+min-pair-sat gen gnp --n 20 40 80 --p 0.1 0.3 --count 5 --out-dir graphs/gnp
+# triangular lattice with n vertices per side (n(n+1)/2 vertices), each edge EXcluded
+# with probability p, then raised to power e (e=2: also join vertices at distance 2, ...)
+min-pair-sat gen triangular --n 8 16 --p 0.1 --e 1 2 3 --count 5 --out-dir graphs/tri
+```
+
+The power is taken after exclusion, so it only follows paths that survived.
 
 Sweep (`examples/sweep.json` expands graphs × strategies × solvers):
 

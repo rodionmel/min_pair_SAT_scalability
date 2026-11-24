@@ -9,14 +9,18 @@ the level when no ``-v`` is given.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import logging
 import os
 import sys
 
-from . import __version__, jobs
+from . import __version__, generators, jobs
+from .graph import write_graph
 from .problems import PROBLEMS
 from .solve import DEFAULT_SOLVER, STRATEGIES
+
+log = logging.getLogger(__name__)
 
 
 def setup_logging(verbosity: int) -> None:
@@ -46,6 +50,27 @@ def _cmd_solve(a) -> int:
     else:
         print(text)
     return 0 if out["status"] != "error" else 1
+
+
+def _cmd_gen(a) -> int:
+    """``gen <gnp|triangular>``: write one DIMACS file per parameter combination and seed.
+
+    File names encode the parameters, e.g. ``gnp_n50_p0.3_s2.dimacs``.
+    """
+    os.makedirs(a.out_dir, exist_ok=True)
+    es = a.e if a.model == "triangular" else [None]
+    count = 0
+    for n, p, e in itertools.product(a.n, a.p, es):
+        for seed in range(a.seed, a.seed + a.count):
+            if a.model == "gnp":
+                g, fname = generators.gnp(n, p, seed), f"gnp_n{n}_p{p}_s{seed}.dimacs"
+            else:
+                g, fname = generators.triangular(n, p, e, seed), f"tri_n{n}_p{p}_e{e}_s{seed}.dimacs"
+            write_graph(g, os.path.join(a.out_dir, fname))
+            log.info("wrote %s: n=%d m=%d", fname, g.n, g.m)
+            count += 1
+    print(f"wrote {count} graphs to {a.out_dir}")
+    return 0
 
 
 def _cmd_jobs(a) -> int:
@@ -87,6 +112,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--params", default="{}", help="JSON dict of encoder parameters")
     s.add_argument("-o", "--output", help="write JSON here instead of stdout")
     s.set_defaults(func=_cmd_solve)
+
+    g = sub.add_parser("gen", help="generate random graphs (DIMACS files)",
+                       description="Every combination of the listed --n/--p/--e values is generated "
+                                   "for --count consecutive seeds starting at --seed.")
+    gsub = g.add_subparsers(dest="model", required=True)
+    gg = gsub.add_parser("gnp", help="uniform random graph G(n, p): each edge included with probability p")
+    gt = gsub.add_parser("triangular", help="triangular lattice with n vertices per side, each edge "
+                                            "EXcluded with probability p, raised to power e")
+    for sp in (gg, gt):
+        sp.add_argument("--n", type=int, nargs="+", required=True,
+                        help="vertices (gnp) / vertices per triangle side (triangular)")
+        sp.add_argument("--p", type=float, nargs="+", required=True,
+                        help="edge inclusion (gnp) / exclusion (triangular) probability")
+        sp.add_argument("--seed", type=int, default=0, help="first seed (default 0)")
+        sp.add_argument("--count", type=int, default=1, help="seeds per parameter combination")
+        sp.add_argument("--out-dir", default="graphs", help="output directory (default: graphs)")
+    gt.add_argument("--e", type=int, nargs="+", default=[1],
+                    help="graph power: 1 = planar graph, 2 = add edges for paths of length 2, ...")
+    g.set_defaults(func=_cmd_gen)
 
     j = sub.add_parser("jobs", help="plan / run / submit / collect a sweep")
     jsub = j.add_subparsers(dest="jobs_cmd", required=True)
