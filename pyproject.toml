@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "min_pair_sat_scalability"
+version = "0.1.0"
+description = "Tool and testground for studying the scalability of SAT-based min-pair problems."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Rodion Melnikov" }]
+dependencies = ["python-sat>=1.8.dev0"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+gen = ["networkx"]  # random graph generators (next stage)
+smt = ["z3-solver"]  # optional SMT backend (not wired in yet)
+
+[project.scripts]
+min-pair-sat = "min_pair_sat_scalability.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

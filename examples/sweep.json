@@ -1,0 +1,8 @@
+{
+  "problem": "pair_cover",
+  "graphs": ["graphs/*.dimacs"],
+  "strategies": ["linear", "binary", "maxsat"],
+  "solvers": ["glucose4"],
+  "timeout": 60,
+  "params": {}
+}
