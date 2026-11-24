@@ -73,9 +73,17 @@ def test_triangular_full_exclusion_is_empty():
     assert (g.n, g.m) == (15, 0)
 
 
-def test_triangular_power_is_taken_after_exclusion():
-    base = triangular(6, 0.3, e=1, seed=4)
-    assert triangular(6, 0.3, e=2, seed=4) == power(base, 2)  # same seed -> same exclusion
+def test_triangular_no_exclusion_is_power():
+    assert triangular(6, 0.0, e=2) == power(triangular_lattice(6), 2)
+
+
+def test_triangular_exclusion_is_applied_to_power_graph():
+    full = power(triangular_lattice(8), 3)
+    g = triangular(8, 0.4, e=3, seed=1)
+    assert edge_set(g) < edge_set(full)
+    # power-then-exclude can drop a distance-1 edge while keeping distance-2/3 ones,
+    # so the result is generally not itself a power of a subgraph of the lattice
+    assert abs(g.m / full.m - 0.6) < 0.08
 
 
 def test_triangular_large_power_gives_complete_graph():
@@ -105,3 +113,10 @@ def test_cli_gen_writes_product_of_params(tmp_path):
 def test_cli_gen_gnp(tmp_path):
     assert main(["gen", "gnp", "--n", "12", "--p", "0.5", "--seed", "4", "--out-dir", str(tmp_path)]) == 0
     assert read_graph(tmp_path / "gnp_n12_p0.5_s4.dimacs") == gnp(12, 0.5, seed=4)
+
+
+def test_geometric_sizes_sqrt2():
+    from min_pair_sat_scalability.generators import geometric_sizes
+    assert geometric_sizes(8, 128) == [8, 11, 16, 23, 32, 45, 64, 91, 128]
+    assert geometric_sizes(4, 32) == [4, 6, 8, 11, 16, 23, 32]
+    assert geometric_sizes(1, 3) == [1, 2, 3]  # 1, 1.41->1 (dropped as duplicate), 2, 2.83->3

@@ -1,16 +1,18 @@
 """Random graph generators. All are deterministic for a given ``seed``.
 
 * ``gnp(n, p)``            -- uniform random graph G(n, p).
-* ``triangular(n, p, e)``  -- triangle-shaped piece of the triangular lattice
-  with random edge exclusion, raised to the e-th power.
+* ``triangular(n, p, e)``  -- e-th power of a triangle-shaped piece of the
+  triangular lattice, with random edge exclusion.
 """
 
 from __future__ import annotations
 
 import itertools
 import logging
+import math
 import random
 from collections import deque
+from typing import Optional
 
 from .graph import Graph
 
@@ -75,24 +77,19 @@ def power(g: Graph, e: int) -> Graph:
 
 
 def triangular(n: int, p: float, e: int = 1, seed: int = 0) -> Graph:
-    """Random planar-based graph: the triangular lattice with ``n`` vertices per
-    side (see ``triangular_lattice``), each edge excluded independently with
-    probability ``p``, then raised to the power ``e`` (see ``power``).
+    """Random planar-based graph: the e-th power (see ``power``) of the
+    triangular lattice with ``n`` vertices per side (see ``triangular_lattice``),
+    then each edge of that power graph excluded independently with probability ``p``.
 
-    The power is taken on the thinned graph, so e=2 links two vertices iff a
-    path of length <= 2 survived the exclusion. The vertex count is always
-    n(n+1)/2; exclusion can leave vertices isolated.
+    The vertex count is always n(n+1)/2; exclusion can leave vertices isolated.
     """
     _check_prob(p)
     rng = random.Random(seed)
-    base = triangular_lattice(n)
-    kept = [edge for edge in base.edges if rng.random() >= p]
-    g = Graph.from_edges(base.n, kept)
-    if e > 1:
-        g = power(g, e)
-    g = Graph(g.n, g.edges, name=f"triangular n={n} p={p} e={e} seed={seed}")
-    log.debug("triangular: n=%d p=%g e=%d seed=%d -> vertices=%d lattice m=%d kept=%d final m=%d",
-              n, p, e, seed, g.n, base.m, len(kept), g.m)
+    full = power(triangular_lattice(n), e)
+    kept = [edge for edge in full.edges if rng.random() >= p]
+    g = Graph(full.n, tuple(kept), name=f"triangular n={n} p={p} e={e} seed={seed}")
+    log.debug("triangular: n=%d p=%g e=%d seed=%d -> vertices=%d power m=%d kept m=%d",
+              n, p, e, seed, g.n, full.m, g.m)
     return g
 
 
@@ -102,3 +99,32 @@ def _check_prob(p: float) -> None:
 
 
 GENERATORS = {"gnp": gnp, "triangular": triangular}
+
+
+def generate(model: str, n: int, p: float, e: Optional[int] = None, seed: int = 0) -> tuple[Graph, str]:
+    """Build a graph of the given model and return it with its canonical file
+    name, e.g. ``gnp_n50_p0.3_s2.dimacs`` / ``tri_n8_p0.1_e2_s0.dimacs``."""
+    if model == "gnp":
+        return gnp(n, p, seed), f"gnp_n{n}_p{p}_s{seed}.dimacs"
+    if model == "triangular":
+        e = 1 if e is None else e
+        return triangular(n, p, e, seed), f"tri_n{n}_p{p}_e{e}_s{seed}.dimacs"
+    raise ValueError(f"unknown model {model!r}; known: {sorted(GENERATORS)}")
+
+
+def geometric_sizes(start: int, stop: int, factor: float = math.sqrt(2)) -> list[int]:
+    """Sizes start, start*f, start*f^2, ... <= stop, rounded half up, duplicates dropped.
+
+    With the default factor sqrt(2), start=8 gives 8, 11, 16, 23, 32, 45, 64, 91, 128.
+    """
+    if start < 1 or factor <= 1:
+        raise ValueError("need start >= 1 and factor > 1")
+    sizes: list[int] = []
+    i = 0
+    while True:
+        s = int(start * factor ** i + 0.5)
+        if s > stop:
+            return sizes
+        if not sizes or s != sizes[-1]:
+            sizes.append(s)
+        i += 1

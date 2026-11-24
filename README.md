@@ -23,7 +23,7 @@ pip install -e ".[dev]"
 | `problems.py` | encoders `(graph, K) -> Encoding(clauses, decode)`; register new ones in `PROBLEMS` |
 | `solve.py` | search over K: `linear` (K = 0, 1, 2, ...) or `binary` (doubling, then bisection) |
 | `jobs.py` | sweep planning, local / SLURM execution, result collection |
-| `generators.py` | random graphs: uniform G(n, p) and thinned triangular lattice (+ graph power) |
+| `generators.py` | random graphs: uniform G(n, p) and thinned power of a triangular lattice |
 
 ### The problem: `pair_cover`
 
@@ -49,12 +49,12 @@ named after their parameters, e.g. `tri_n8_p0.1_e2_s0.dimacs`):
 ```bash
 # uniform random: n vertices, each edge included with probability p
 min-pair-sat gen gnp --n 20 40 80 --p 0.1 0.3 --count 5 --out-dir graphs/gnp
-# triangular lattice with n vertices per side (n(n+1)/2 vertices), each edge EXcluded
-# with probability p, then raised to power e (e=2: also join vertices at distance 2, ...)
+# triangular lattice with n vertices per side (n(n+1)/2 vertices), raised to power e
+# (e=2: also join vertices at distance 2, ...), then each edge EXcluded with probability p
 min-pair-sat gen triangular --n 8 16 --p 0.1 --e 1 2 3 --count 5 --out-dir graphs/tri
 ```
 
-The power is taken after exclusion, so it only follows paths that survived.
+The power is built on the full lattice; exclusion is applied to the power graph.
 
 Sweep (`examples/sweep.json` expands graphs × strategies × solvers):
 
@@ -68,6 +68,24 @@ min-pair-sat jobs collect results/demo          # -> results/demo/results.csv
 
 Each job writes `runs/<id>.json` (status, cost, lower bound, solution, encoding size, per-call
 SAT timings). Finished jobs are skipped, so `run`/`submit` can simply be repeated after failures.
+
+### Experiments
+
+`experiments/` holds sweep specs whose `generator` block makes `jobs plan` generate the graphs
+into `<run dir>/graphs`. Sizes grow by a factor of sqrt(2); each job records its generator
+parameters, which become columns (`model`, `n`, `p`, `e`, `seed`) of `results.csv`.
+
+| spec | grid | jobs |
+|---|---|---|
+| `gnp_grid.json` | p ∈ {0.1, 0.25, 0.5, 0.75, 0.9}, n = 8 … 128, 5 seeds | 225 |
+| `tri_grid.json` | p ∈ {0, 0.1, 0.25, 0.5, 0.75}, e ∈ 1…5, n = 4 … 32, 5 seeds | 875 |
+| `gnp_small.json`, `tri_small.json` | reduced versions for trial runs (30 s timeout) | 24, 36 |
+
+```bash
+min-pair-sat jobs plan experiments/tri_small.json results/tri_small
+min-pair-sat -v jobs submit results/tri_small --mem 2G
+min-pair-sat jobs collect results/tri_small
+```
 
 ### Solvers and timeouts
 

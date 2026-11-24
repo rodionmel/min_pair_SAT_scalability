@@ -62,10 +62,7 @@ def _cmd_gen(a) -> int:
     count = 0
     for n, p, e in itertools.product(a.n, a.p, es):
         for seed in range(a.seed, a.seed + a.count):
-            if a.model == "gnp":
-                g, fname = generators.gnp(n, p, seed), f"gnp_n{n}_p{p}_s{seed}.dimacs"
-            else:
-                g, fname = generators.triangular(n, p, e, seed), f"tri_n{n}_p{p}_e{e}_s{seed}.dimacs"
+            g, fname = generators.generate(a.model, n, p, e, seed)
             write_graph(g, os.path.join(a.out_dir, fname))
             log.info("wrote %s: n=%d m=%d", fname, g.n, g.m)
             count += 1
@@ -118,8 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
                                    "for --count consecutive seeds starting at --seed.")
     gsub = g.add_subparsers(dest="model", required=True)
     gg = gsub.add_parser("gnp", help="uniform random graph G(n, p): each edge included with probability p")
-    gt = gsub.add_parser("triangular", help="triangular lattice with n vertices per side, each edge "
-                                            "EXcluded with probability p, raised to power e")
+    gt = gsub.add_parser("triangular", help="e-th power of the triangular lattice with n vertices "
+                                            "per side, each edge then EXcluded with probability p")
     for sp in (gg, gt):
         sp.add_argument("--n", type=int, nargs="+", required=True,
                         help="vertices (gnp) / vertices per triangle side (triangular)")

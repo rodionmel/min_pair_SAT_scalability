@@ -79,7 +79,7 @@ def test_submit_dry_run_only_pending(tmp_path):
     jobs.run_job(run_dir, 1)
     script = jobs.submit(run_dir, max_parallel=2, sbatch_args=("--partition=x",), dry_run=True)
     text = script.read_text()
-    assert "#SBATCH --array=0,2,3%2" in text
+    assert "#SBATCH --array=0,2-3%2" in text
     assert "#SBATCH --partition=x" in text
     assert "jobs run" in text and "$SLURM_ARRAY_TASK_ID" in text
 
@@ -116,3 +116,22 @@ def test_verbose_logs_go_to_stderr(tmp_path, capsys):
     json.loads(cap.out)  # stdout is still pure JSON
     assert "K=4 -> SAT" in cap.err and "pair_cover:" in cap.err
     main([])  # reset logging to quiet for later tests
+
+
+def test_plan_with_generator(tmp_path):
+    spec = tmp_path / "grid.json"
+    spec.write_text(json.dumps({"problem": "pair_cover", "timeout": 30, "generator": {
+        "model": "triangular", "n": {"start": 3, "stop": 4}, "p": [0, 0.5], "e": [1, 2], "seeds": 2}}))
+    run_dir = tmp_path / "run"
+    planned = jobs.plan(spec, run_dir)
+    assert len(planned) == 2 * 2 * 2 * 2  # n in {3, 4} x p x e x seeds
+    assert len(list((run_dir / "graphs").iterdir())) == 16
+    assert planned[-1]["gen"] == {"model": "triangular", "n": 4, "p": 0.5, "seed": 1, "e": 2}
+    jobs.run_local(run_dir)
+    rows = list(csv.DictReader(open(jobs.collect(run_dir))))
+    assert rows[-1]["model"] == "triangular" and rows[-1]["e"] == "2" and rows[-1]["seed"] == "1"
+
+
+def test_array_spec_compression():
+    assert jobs._array_spec([0, 1, 2, 5, 7, 8]) == "0-2,5,7-8"
+    assert jobs._array_spec([3]) == "3"

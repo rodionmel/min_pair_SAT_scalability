@@ -23,6 +23,18 @@ Sweep spec (JSON) -- the list fields are expanded as a cartesian product::
       "k_max": null,                      # optional cap on the K search
       "params": {}                        # passed to the encoder
     }
+
+Instead of (or besides) ``graphs``, a ``generator`` block generates the
+graphs into ``<dir>/graphs`` at plan time; each job then also records its
+generator parameters under ``gen``::
+
+    "generator": {
+      "model": "triangular",              # or "gnp"
+      "n": {"start": 4, "stop": 32},      # sqrt(2) progression (optional "factor"), or a list
+      "p": [0, 0.1, 0.25],
+      "e": [1, 2, 3],                     # triangular only
+      "seeds": 5                          # seeds 0..4 per combination
+    }
 """
 
 from __future__ import annotations
@@ -41,7 +53,8 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
-from .graph import read_graph
+from .generators import generate, geometric_sizes
+from .graph import read_graph, write_graph
 from .problems import encode
 from .solve import DEFAULT_SOLVER, Result, minimize
 
@@ -57,27 +70,57 @@ def plan(spec_path: str | Path, out_dir: str | Path) -> list[dict]:
     """
     spec_path = Path(spec_path).resolve()
     spec = json.loads(spec_path.read_text())
-    graphs = []
-    for pattern in spec["graphs"]:
-        matches = sorted(glob.glob(str(spec_path.parent / pattern)))
-        if not matches:
-            raise FileNotFoundError(f"no graphs match {pattern!r}")
-        log.debug("plan: %r matched %d graphs", pattern, len(matches))
-        graphs += matches
-    jobs = [
-        {"id": i, "problem": spec["problem"], "graph": g, "strategy": st, "solver": so,
-         "timeout": spec.get("timeout"), "k_max": spec.get("k_max"), "params": spec.get("params", {})}
-        for i, (g, st, so) in enumerate(itertools.product(
-            graphs, spec.get("strategies", ["linear"]), spec.get("solvers", [DEFAULT_SOLVER])))
-    ]
-    out = Path(out_dir)
+    out = Path(out_dir).resolve()
     jobs_file = out / "jobs.jsonl"
     if jobs_file.exists():
         raise FileExistsError(f"{jobs_file} exists; use a fresh directory per sweep")
     (out / "runs").mkdir(parents=True, exist_ok=True)
+
+    # (graph path, generator params or None)
+    graphs: list[tuple[str, Optional[dict]]] = []
+    for pattern in spec.get("graphs", []):
+        matches = sorted(glob.glob(str(spec_path.parent / pattern)))
+        if not matches:
+            raise FileNotFoundError(f"no graphs match {pattern!r}")
+        log.debug("plan: %r matched %d graphs", pattern, len(matches))
+        graphs += [(m, None) for m in matches]
+    if "generator" in spec:
+        graphs += _generate_graphs(spec["generator"], out / "graphs")
+    if not graphs:
+        raise ValueError("spec has neither 'graphs' nor 'generator'")
+
+    jobs = []
+    for (g, gen), st, so in itertools.product(graphs, spec.get("strategies", ["linear"]),
+                                              spec.get("solvers", [DEFAULT_SOLVER])):
+        job = {"id": len(jobs), "problem": spec["problem"], "graph": g, "strategy": st, "solver": so,
+               "timeout": spec.get("timeout"), "k_max": spec.get("k_max"), "params": spec.get("params", {})}
+        if gen is not None:
+            job["gen"] = gen
+        jobs.append(job)
     (out / "spec.json").write_text(json.dumps(spec, indent=2))
     jobs_file.write_text("".join(json.dumps(j) + "\n" for j in jobs))
     return jobs
+
+
+def _generate_graphs(gspec: dict, gdir: Path) -> list[tuple[str, dict]]:
+    """Generate every (n, p, e, seed) combination of a ``generator`` block into ``gdir``."""
+    model = gspec["model"]
+    n_spec = gspec["n"]
+    ns = (geometric_sizes(n_spec["start"], n_spec["stop"], n_spec.get("factor", 2 ** 0.5))
+          if isinstance(n_spec, dict) else list(n_spec))
+    es = gspec.get("e", [1]) if model == "triangular" else [None]
+    gdir.mkdir(parents=True, exist_ok=True)
+    out = []
+    for n, p, e, seed in itertools.product(ns, gspec["p"], es, range(gspec.get("seeds", 1))):
+        g, fname = generate(model, n, p, e, seed)
+        path = gdir / fname
+        write_graph(g, path)
+        params = {"model": model, "n": n, "p": p, "seed": seed}
+        if e is not None:
+            params["e"] = e
+        out.append((str(path), params))
+    log.info("plan: generated %d %s graphs (n in %s) into %s", len(out), model, ns, gdir)
+    return out
 
 
 def load_jobs(run_dir: str | Path) -> list[dict]:
@@ -169,6 +212,20 @@ def _slurm_time(seconds: float) -> str:
     return f"{s // 86400}-{s % 86400 // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}"
 
 
+def _array_spec(ids: list[int]) -> str:
+    """Compress sorted ids into a SLURM array spec, e.g. [0,1,2,5,7,8] -> "0-2,5,7-8"."""
+    parts = []
+    start = prev = ids[0]
+    for i in ids[1:] + [None]:
+        if i is not None and i == prev + 1:
+            prev = i
+            continue
+        parts.append(str(start) if start == prev else f"{start}-{prev}")
+        if i is not None:
+            start = prev = i
+    return ",".join(parts)
+
+
 def submit(run_dir: str | Path, mem: str = "4G", time_limit: Optional[str] = None,
            max_parallel: Optional[int] = None, sbatch_args: tuple[str, ...] = (),
            dry_run: bool = False, verbosity: int = 0) -> Optional[Path]:
@@ -187,7 +244,7 @@ def submit(run_dir: str | Path, mem: str = "4G", time_limit: Optional[str] = Non
     if time_limit is None:  # solver timeout + margin for encoding and I/O
         timeouts = [j.get("timeout") or 3600 for j in load_jobs(run_dir)]
         time_limit = _slurm_time(max(timeouts) * 1.2 + 300)
-    array = ",".join(map(str, ids))
+    array = _array_spec(ids)
     if max_parallel:
         array += f"%{max_parallel}"
     (run_dir / "logs").mkdir(exist_ok=True)
@@ -205,7 +262,8 @@ def submit(run_dir: str | Path, mem: str = "4G", time_limit: Optional[str] = Non
     return script
 
 
-CSV_FIELDS = ["id", "graph", "problem", "strategy", "solver", "timeout", "graph_n", "graph_m",
+CSV_FIELDS = ["id", "graph", "model", "n", "p", "e", "seed",
+              "problem", "strategy", "solver", "timeout", "graph_n", "graph_m",
               "k_max", "status", "cost", "lower_bound", "nvars", "nclauses", "n_calls",
               "solve_time", "encode_time", "wall_time", "total_time", "host", "error"]
 
@@ -223,7 +281,8 @@ def collect(run_dir: str | Path) -> Path:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
         # Flatten: job fields, result fields, and per-call times summed over all K tried.
         calls = r.get("calls", [])
-        row = {**job, **{k: r.get(k) for k in CSV_FIELDS if k in r}, "n_calls": len(calls),
+        row = {**job, **job.get("gen", {}), **{k: r.get(k) for k in CSV_FIELDS if k in r},
+               "n_calls": len(calls),
                "solve_time": sum(c["time"] for c in calls),
                "encode_time": sum(c.get("encode_time", 0) for c in calls)}
         rows.append({k: row.get(k) for k in CSV_FIELDS})
