@@ -16,7 +16,8 @@ dependencies = ["python-sat>=1.8.dev0"]
 [project.optional-dependencies]
 dev = ["pytest"]
 gen = ["networkx"]  # random graph generators (next stage)
-smt = ["z3-solver"]  # optional SMT backend (not wired in yet)
+smt = ["z3-solver"]
+plot = ["matplotlib"]  # analysis/plot_results.py  # optional SMT backend (not wired in yet)
 
 [project.scripts]
 min-pair-sat = "min_pair_sat_scalability.cli:main"

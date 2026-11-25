@@ -117,6 +117,13 @@ min-pair-sat -v jobs submit results/tri_small --mem 2G
 min-pair-sat jobs collect results/tri_small
 ```
 
+### Plots
+
+`pip install -e ".[plot]"`, collect the sweeps, then `python analysis/plot_results.py` writes to
+`results/figures/`: `overview_<model>.png` (time heatmap, both methods), `scaling_<model>.png`
+(time vs vertices per p; lines break at unsolved sizes, timeouts as hollow markers),
+`methods.png` (pair_cover vs coloring per graph) and `anatomy.png` (time per K tried).
+
 ### Solvers and timeouts
 
 Any PySAT solver name works (`glucose4` default, `cadical195`, `minisat22`, `maplechrono`, ...).
